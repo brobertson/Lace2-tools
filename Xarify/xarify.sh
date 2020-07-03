@@ -221,9 +221,9 @@ for path in $@; do
             cp $innerPath/*png ./
          fi
          log "$path: binarizing images at level $binarization_level"
-         parallel -P 10 ocropus-nlbin -t $binarization_level {} ::: *png
+         parallel -P 10 kraken -i {} {.}.bin.png binarize --threshold $binarization_level ::: *.png #parallel -P 10 ocropus-nlbin -t $binarization_level {} ::: *png
          rename -f 's/.bin.png/.png/' *png
-         rm *nrm.png
+         #rm *nrm.png
          if [[ $optimize == "True" ]]; then
             log "$path: Optimizing images ..."
             parallel -P 10 optipng {} ::: *png
