@@ -11,6 +11,8 @@ parser = argparse.ArgumentParser(description='''Convert kraken hocr output so
 parser.add_argument('--inputDir', help='Path to directory where source files are found', required=True)
 parser.add_argument('--outputDir', help='Path to directory where output is stored', required=True)
 parser.add_argument('-c', '--confidenceSummary', default=False, action="store_true", help="store summaries of word confidence in xhtml data- attributes and cut all material after the first ; from the word span title attribute, making their mouseover popups less obtrusive.")
+parser.add_argument('-f', '--fixBigWordSpans', default=False, action="store_true", help="fix word_span elements whose bbox area is greater than a third of the whole page area by assigning them the bbox of the previous word.")
+parser.add_argument('-s', '--shareSpaceSpans', default=False, action="store_true", help="normalize hocr output from kraken, which assigns a word to every space and gives it a bbox. This removes those space words and assigns their area to the words on either side, with some space in between, generating output more like Ocropus and tesseract.")
 parser.add_argument("-v", "--verbose", help="increase output verbosity", default=False, action="store_true")
 args = parser.parse_args()
 
@@ -132,17 +134,26 @@ def push_edge_spans_to_borders_of_line(treeIn):
         line_r_edge = line_r_edge - 1
         set_bbox_value(span,2,line_r_edge)
 
-def get_word_span_area(treeIn):
+def fix_word_span_area(treeIn):
     word_spans = treeIn.xpath("//html:span[@class='ocrx_word'] | //html:span[@class='ocr_word']",namespaces={'html':"http://www.w3.org/1999/xhtml"})
     image_area = get_bbox_area(treeIn.xpath("//html:div[@class='ocr_page'][1]",namespaces={'html':"http://www.w3.org/1999/xhtml"})[0])
-    print("image area: {}".format(image_area))
+    #print("image area: {}".format(image_area))
     for span in word_spans:
         area = get_bbox_area(span)
         #print("word area:",area)
         if (area > image_area / 3):
-            print("big word area, deleting: {}".format(area))
+            original_area = span.get('title')
+            my_next = span.getnext()
+            my_previous = span.getprevious()
+            if (my_next):
+                span.set('title',my_next.get('title'))
+            elif (my_previous):
+                span.set('title',my_previous.get('title'))
+            else:
+                span.set('title',span.getparent().get('title'))
+            print("big word area, changing title attribute {}".format(original_area))
             print(etree.tostring(span))
-            span.getparent().remove(span)
+            #span.getparent().remove(span)
 
 
 def clean_ocr_page_title(xhtml, file_name):
@@ -205,9 +216,11 @@ for root, dirs, files in os.walk(args.inputDir):
                     find_xhtml_body = etree.ETXPath("//{%s}body" % XHTML_NAMESPACE)
                     results = find_xhtml_body(tree)
                     xhtml = transform_to_xhtml(tree)
-                    get_word_span_area(xhtml)
+                    if (args.fixBigWordSpans):
+                        fix_word_span_area(xhtml)
                     clean_ocr_page_title(xhtml, file_name)
-                    share_space_spans(xhtml)
+                    if (args.shareSpaceSpans):
+                        share_space_spans(xhtml)
                     if (args.confidenceSummary):
                         confidence_summary(xhtml)
                     #push_edge_spans_to_borders_of_line(xhtml)
