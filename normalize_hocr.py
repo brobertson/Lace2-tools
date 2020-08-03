@@ -1,7 +1,16 @@
 #!/usr/bin/env python
-import html, os, sys, argparse
+#2020, Bruce Robertson
+#Master file at https://github.com/brobertson/Lace2-tools/blob/master/normalize_hocr.py
+import html, os, sys, argparse, PIL
 from statistics import mean
 from lxml import etree
+from PIL import Image
+
+#a custom exception to indiate when a page or other element doesn't 
+#have a bounding box where we would expect it.
+class BboxError(Exception):
+    pass
+
 #parse the arguments 
 parser = argparse.ArgumentParser(description='''Convert kraken hocr output so
                                  that word bounding boxes are very likely to enclose the words, plus some space.
@@ -10,8 +19,9 @@ parser = argparse.ArgumentParser(description='''Convert kraken hocr output so
                                  namespaced XHTML.''') 
 parser.add_argument('--inputDir', help='Path to directory where source files are found', required=True)
 parser.add_argument('--outputDir', help='Path to directory where output is stored', required=True)
+parser.add_argument('--imageDir', help='Path to directory where images corresponding to the html files are stored.', required=False)
 parser.add_argument('-c', '--confidenceSummary', default=False, action="store_true", help="store summaries of word confidence in xhtml data- attributes and cut all material after the first ; from the word span title attribute, making their mouseover popups less obtrusive.")
-parser.add_argument('-f', '--fixBigWordSpans', default=False, action="store_true", help="fix word_span elements whose bbox area is greater than a third of the whole page area by assigning them the bbox of the previous word.")
+parser.add_argument('-f', '--fixBigWordSpans', default=False, action="store_true", help="fix word_span elements whose bbox area is greater than a sixth of the whole page area by assigning them the bbox of the previous word.")
 parser.add_argument('-s', '--shareSpaceSpans', default=False, action="store_true", help="normalize hocr output from kraken, which assigns a word to every space and gives it a bbox. This removes those space words and assigns their area to the words on either side, with some space in between, generating output more like Ocropus and tesseract.")
 parser.add_argument("-v", "--verbose", help="increase output verbosity", default=False, action="store_true")
 args = parser.parse_args()
@@ -25,20 +35,26 @@ def get_bbox_val(span, position):
             if part.startswith('bbox'):
                 bbox_string = part
         if bbox_string == "":
-            print("couldn't find the bbox part!")
+            if (args.verbose):
+                print("couldn't find the bbox part!")
         return int(bbox_string.split(' ')[position+1])
     except Exception as e:
-        print("Exception getting title element on span {}".format(etree.tostring(span)))
-        print(e)
-        raise
+        #print("Exception getting title element on span {}".format(etree.tostring(span)))
+        if (args.verbose):
+            print(e)
+            print("... therefore raising BboxError")
+        raise BboxError
     
 def get_bbox_area(span):
     try:
         width = get_bbox_val(span,2) - get_bbox_val(span,0)
         height = get_bbox_val(span,3) - get_bbox_val(span,1)
-        return width * height
+        area = width * height
+        if (args.verbose):
+            print("this element's area is " + str(area))
+        return area
     except Exception as e:
-        print("Exception getting area on span  {}".format(etree.tostring(span)))
+        #print("Exception getting area on span  {}".format(etree.tostring(span)))
         raise
 
 def set_bbox_value(span, position, val):
@@ -46,6 +62,7 @@ def set_bbox_value(span, position, val):
         parts = span.get('title').split(';')
     except Exception as e:
         print("Exception getting title element on span id {}.".format(span.get('id')))
+        raise BboxError
     bbox_parts = parts[0].split(' ')
     bbox_parts[position + 1] = str(val)
     bbox_out = ' '.join(bbox_parts)
@@ -141,7 +158,7 @@ def fix_word_span_area(treeIn):
     for span in word_spans:
         area = get_bbox_area(span)
         #print("word area:",area)
-        if (area > image_area / 3):
+        if (area > image_area / 6):
             original_area = span.get('title')
             my_next = span.getnext()
             my_previous = span.getprevious()
@@ -167,6 +184,16 @@ def clean_ocr_page_title(xhtml, file_name):
    #print(new_sections)
    ocr_page.set('title',new_sections)
    return xhtml
+
+def rewrite_ocr_page_title(xhtml, file_name, image_x, image_y):
+    ocr_page = xhtml.xpath("//html:div[@class='ocr_page'][1]",namespaces={'html':"http://www.w3.org/1999/xhtml"})[0]
+    image_file_name = (file_name.rsplit('.', 1)[0] + '.png')
+    image_path = os.path.join(args.imageDir, image_file_name)
+    image = Image.open(image_path)
+    image_x, image_y = image.size
+    new_title = "bbox 0 0 " + str(image_x) + " " + str(image_y) + ";image " + image_file_name
+    ocr_page.set('title',new_title)
+    return xhtml
 
 if not(os.path.isdir(args.inputDir)):
     print('Input directory "'+image_dir+'" does not exist.\n\tExiting ...')
@@ -217,7 +244,26 @@ for root, dirs, files in os.walk(args.inputDir):
                     results = find_xhtml_body(tree)
                     xhtml = transform_to_xhtml(tree)
                     if (args.fixBigWordSpans):
-                        fix_word_span_area(xhtml)
+                        try:
+                            fix_word_span_area(xhtml)
+                        except BboxError:
+                            if (args.verbose):
+                                print("we get a bbox error while trying to fix word span areas on " + file_name + " so we'll try to rewrite the page bbox using imageDir")
+                            try:
+                                #todo check that args.imageDir is set
+                                if not(os.path.isdir(args.imageDir)):
+                                    print("To correct these files, the imageDir argument has to be set to a valid directory.")
+                                    exit(1)
+                                #remove '.html' and add '.png'
+                                image_file_name = file_name[:-5] + '.png'
+                                image_path = os.path.join(args.imageDir, image_file_name)
+                                image = PIL.Image.open(image_path)
+                                image_x, image_y = image.size
+                                rewrite_ocr_page_title(xhtml, file_name, image_x, image_y)
+                                fix_word_span_area(xhtml)
+                            except Exception:
+                                print("something went wrong trying to fix the page bbox on this file. Aborting.")
+                                raise
                     clean_ocr_page_title(xhtml, file_name)
                     if (args.shareSpaceSpans):
                         share_space_spans(xhtml)
