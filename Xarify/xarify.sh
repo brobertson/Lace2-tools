@@ -111,6 +111,11 @@ fi
 # get rid of the just-finished flag arguments
 shift $((OPTIND - 1))
 
+if [ -z "$LACE_TOOLS_DIR" ]; then
+    log 'please set the env. variable $LACE_TOOLS_DIR. Exiting ...'
+    exit 1
+fi
+
 # TODO: put a loop here so that multiple directories
 # can be added
 for path in $@; do
@@ -316,12 +321,23 @@ for path in $@; do
                   rm -rf $OUT
                   exit 1
                }
-               cat $TEXTOUT/expath-pkg.xml
-               ln -s $innerPath/$dir/*html ./
+               echo "Here is the expath-pkg.xml file:"
+	       cat $TEXTOUT/expath-pkg.xml
+	       echo "Cleaning the html files"
 	       #TODO: check for the existence of the images.xar file! 'continue' if it doesn't exist
-	       if [[ ! -f ${images_xar_file} ]]; then
-		       images_xar_file=$fullpath/$dirname-images.xar
-		fi
+               if [[ ! -f ${images_xar_file} ]]; then
+                       images_xar_file=$fullpath/$dirname-images.xar
+               fi
+	       img_temp=$(mktemp -d)
+	       htmltemp=$(mktemp -d)
+	       cp $images_xar_file $img_temp
+	       cd $img_temp
+	       unzip $img_temp/$dirname-images.xar
+
+	       python3 $LACE_TOOLS_DIR/normalize_hocr.py --outputDir $htmltemp --inputDir $innerPath/$dir --imageDir $img_temp -f -v
+               ln -s $htmltemp ./ 
+	       rm -rf $img_temp
+	       #ln -s $innerPath/$dir/*html ./
                python3 $CIACONNA_HOME/bin/Python/accuracySvgAndTotals.py ./ ${images_xar_file}
                ln -s $XARIFY_HOME/StaticFilesForTextXar/* ./
                rm -f $fullpath/$dirname-$rundate-$classifier-texts.xar
@@ -329,6 +345,7 @@ for path in $@; do
                echo "Made text archive $fullpath/$dirname-$rundate-$classifier-texts.xar"
                cd - >/dev/null
                rm -rf $TEXTOUT
+	       rm -rf $htmltemp
                if [[ $server_url != "False" ]]; then
                   log "transferring files to $server_url"
                   curl -F files[]=@$fullpath/$dirname-$rundate-$classifier-texts.xar -u $username:$password "http://${server_url}/exist/apps/public-repo/modules/upload.xql" 
