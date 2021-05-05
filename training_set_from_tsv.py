@@ -89,7 +89,7 @@ for row in data:
     output_base = basename + '_' + str(image_counter)   
     #prepare the filenames of the text groundtruth file and output image file
     gt_filename = output_base + '.gt.txt'
-    image_out_filename = output_base + '.bin.png'
+    image_out_filename = output_base + '.png'
     text_out_path = os.path.join(args.outputDir,gt_filename)
     #output the text gt file
     #TODO Wrap with exception handler, in case the filesystem fills up
